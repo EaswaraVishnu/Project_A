@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Instagram Chat Mimic</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #000;
+    --surface: #1a1a1a;
+    --surface2: #262626;
+    --border: #363636;
+    --text: #fafafa;
+    --text-muted: #a8a8a8;
+    --accent: #0095f6;
+    --accent2: #833ab4;
+    --bubble-them: #262626;
+    --bubble-me: #0095f6;
+    --radius: 22px;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+
+  /* ── Setup screens ── */
+  #setup-screen, #contact-screen {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 1.5rem;
+    gap: 1.5rem;
+  }
+
+  .logo {
+    width: 56px; height: 56px;
+    background: linear-gradient(45deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888);
+    border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 28px;
+  }
+
+  h1 { font-size: 22px; font-weight: 600; text-align: center; }
+  p.sub { font-size: 14px; color: var(--text-muted); text-align: center; line-height: 1.5; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 1.25rem;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .card label { font-size: 13px; color: var(--text-muted); font-weight: 500; }
+
+  input[type="text"], input[type="password"], input[type="file"] {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+    font-size: 15px;
+    padding: 12px 14px;
+    width: 100%;
+    outline: none;
+    font-family: var(--font);
+  }
+  input:focus { border-color: var(--accent); }
+  input[type="file"] { padding: 10px; font-size: 13px; cursor: pointer; }
+
+  .btn {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    padding: 13px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    width: 100%;
+    font-family: var(--font);
+  }
+  .btn:active { opacity: 0.85; }
+  .btn.secondary {
+    background: var(--surface2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    font-weight: 500;
+  }
+
+  .hint { font-size: 12px; color: var(--text-muted); text-align: center; line-height: 1.5; }
+  .hint a { color: var(--accent); text-decoration: none; }
+
+  /* ── Contact list ── */
+  #contact-screen { justify-content: flex-start; padding-top: 1.5rem; }
+  .contact-list { width: 100%; display: flex; flex-direction: column; gap: 2px; }
+  .contact-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 16px;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .contact-item:hover, .contact-item:active { background: var(--surface); }
+  .avatar {
+    width: 48px; height: 48px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent2), var(--accent));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 600; color: #fff; flex-shrink: 0;
+  }
+  .contact-info { flex: 1; min-width: 0; }
+  .contact-name { font-size: 15px; font-weight: 500; }
+  .contact-preview { font-size: 13px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+  .msg-count { font-size: 12px; color: var(--text-muted); background: var(--surface2); padding: 3px 8px; border-radius: 20px; }
+
+  .search-box {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+    font-size: 15px;
+    padding: 10px 14px;
+    outline: none;
+    font-family: var(--font);
+  }
+
+  /* ── Chat screen ── */
+  #chat-screen {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    display: none;
+  }
+
+  .chat-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .back-btn {
+    background: none; border: none; color: var(--accent);
+    font-size: 15px; cursor: pointer; padding: 4px 8px 4px 0;
+    font-family: var(--font);
+  }
+  .chat-header .avatar { width: 36px; height: 36px; font-size: 14px; }
+  .chat-header-info { flex: 1; }
+  .chat-header-name { font-size: 15px; font-weight: 600; }
+  .chat-header-sub { font-size: 12px; color: var(--text-muted); }
+
+  #messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    scroll-behavior: smooth;
+  }
+
+  .bubble-wrap { display: flex; flex-direction: column; }
+  .bubble-wrap.me { align-items: flex-end; }
+  .bubble-wrap.them { align-items: flex-start; }
+
+  .bubble {
+    max-width: 75%;
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    font-size: 15px;
+    line-height: 1.4;
+    word-break: break-word;
+  }
+  .bubble.me {
+    background: var(--bubble-me);
+    color: #fff;
+    border-bottom-right-radius: 6px;
+  }
+  .bubble.them {
+    background: var(--bubble-them);
+    color: var(--text);
+    border-bottom-left-radius: 6px;
+    border: 1px solid var(--border);
+  }
+  .bubble.typing { color: var(--text-muted); font-style: italic; }
+
+  .time-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-align: center;
+    margin: 8px 0 4px;
+  }
+
+  .input-area {
+    padding: 10px 12px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    background: var(--bg);
+  }
+  #msg-input {
+    flex: 1;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    color: var(--text);
+    font-size: 15px;
+    padding: 10px 16px;
+    outline: none;
+    resize: none;
+    max-height: 120px;
+    font-family: var(--font);
+    line-height: 1.4;
+  }
+  #msg-input:focus { border-color: var(--border); }
+  .send-btn {
+    background: var(--accent);
+    border: none;
+    border-radius: 50%;
+    width: 36px; height: 36px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .send-btn svg { width: 18px; height: 18px; fill: #fff; }
+
+  .hidden { display: none !important; }
+
+  #error-msg {
+    color: #ff3b30;
+    font-size: 13px;
+    text-align: center;
+  }
+
+  /* scrollbar */
+  #messages::-webkit-scrollbar { width: 4px; }
+  #messages::-webkit-scrollbar-track { background: transparent; }
+  #messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<!-- SETUP SCREEN -->
+<div id="setup-screen">
+  <div class="logo">📱</div>
+  <h1>Instagram Chat Mimic</h1>
+  <p class="sub">Chat with an AI that mimics someone from your Instagram DMs</p>
+
+  <div class="card">
+    <label>Anthropic API Key</label>
+    <input type="password" id="api-key-input" placeholder="sk-ant-..." autocomplete="off" />
+
+    <label>Instagram JSON Export</label>
+    <input type="file" id="json-file" accept=".json" />
+
+    <p id="error-msg" class="hidden"></p>
+    <button class="btn" onclick="loadData()">Continue →</button>
+  </div>
+
+  <p class="hint">
+    Get a free API key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a><br>
+    Your data never leaves your device
+  </p>
+</div>
+
+<!-- CONTACT SCREEN -->
+<div id="contact-screen" class="hidden">
+  <h1 style="align-self:flex-start; padding: 0 4px 8px;">Messages</h1>
+  <input class="search-box" id="search-input" placeholder="Search contacts..." oninput="filterContacts()" />
+  <br>
+  <div class="contact-list" id="contact-list"></div>
+</div>
+
+<!-- CHAT SCREEN -->
+<div id="chat-screen">
+  <div class="chat-header">
+    <button class="back-btn" onclick="goBack()">‹ Back</button>
+    <div class="avatar" id="chat-avatar"></div>
+    <div class="chat-header-info">
+      <div class="chat-header-name" id="chat-name"></div>
+      <div class="chat-header-sub">AI mimic · always online</div>
+    </div>
+  </div>
+
+  <div id="messages"></div>
+
+  <div class="input-area">
+    <textarea id="msg-input" placeholder="Message..." rows="1" oninput="autoResize(this)"></textarea>
+    <button class="send-btn" id="send-btn" onclick="sendMessage()">
+      <svg viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg>
+    </button>
+  </div>
+</div>
+
+<script>
+let apiKey = '';
+let allContacts = {};
+let currentContact = null;
+let chatHistory = [];
+let systemPrompt = '';
+
+function showError(msg) {
+  const el = document.getElementById('error-msg');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+
+function loadData() {
+  const key = document.getElementById('api-key-input').value.trim();
+  const file = document.getElementById('json-file').files[0];
+
+  if (!key) return showError('Please enter your API key.');
+  if (!file) return showError('Please select your Instagram JSON file.');
+
+  apiKey = key;
+  localStorage.setItem('ig_api_key', key);
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      parseInstagramData(data);
+    } catch {
+      showError('Could not parse JSON. Make sure it\'s a valid Instagram export file.');
+    }
+  };
+  reader.readAsText(file);
+}
+
+function parseInstagramData(data) {
+  // Instagram exports: single convo or folder with multiple
+  // Format: { participants, messages } or array
+  let conversations = [];
+
+  if (data.messages && Array.isArray(data.messages)) {
+    // Single conversation file
+    conversations = [data];
+  } else if (Array.isArray(data)) {
+    conversations = data;
+  } else {
+    // Try to find messages key anywhere
+    const keys = Object.keys(data);
+    for (const k of keys) {
+      if (Array.isArray(data[k]) && data[k][0]?.messages) {
+        conversations = data[k];
+        break;
+      }
+    }
+  }
+
+  if (conversations.length === 0) {
+    return showError('Could not find messages in this file. Try uploading a specific conversation JSON (e.g. message_1.json).');
+  }
+
+  allContacts = {};
+
+  for (const convo of conversations) {
+    const participants = convo.participants || [];
+    const messages = convo.messages || [];
+    if (messages.length === 0) continue;
+
+    // Find the "other" person (not the account owner — the one with more messages or just pick non-me)
+    const senderCounts = {};
+    for (const m of messages) {
+      if (m.sender_name) senderCounts[m.sender_name] = (senderCounts[m.sender_name] || 0) + 1;
+    }
+
+    const names = Object.keys(senderCounts);
+    if (names.length === 0) continue;
+
+    // The "them" is whoever sent the most messages (or the only other participant)
+    const me = participants.find(p => {
+      const myCount = senderCounts[p.name] || 0;
+      return names.every(n => n === p.name || myCount >= senderCounts[n]);
+    });
+
+    for (const name of names) {
+      if (!allContacts[name]) {
+        allContacts[name] = { name, messages: [], theirMessages: [] };
+      }
+      for (const m of messages) {
+        if (!m.content) continue;
+        allContacts[name].messages.push(m);
+        if (m.sender_name === name) {
+          allContacts[name].theirMessages.push(m.content);
+        }
+      }
+    }
+  }
+
+  // Remove contacts with no their-messages
+  for (const k of Object.keys(allContacts)) {
+    if (allContacts[k].theirMessages.length === 0) delete allContacts[k];
+  }
+
+  if (Object.keys(allContacts).length === 0) {
+    return showError('No contacts with messages found. Try a specific conversation file.');
+  }
+
+  // Save to localStorage
+  localStorage.setItem('ig_contacts', JSON.stringify(allContacts));
+  showContactScreen();
+}
+
+function showContactScreen() {
+  document.getElementById('setup-screen').classList.add('hidden');
+  document.getElementById('contact-screen').classList.remove('hidden');
+  renderContacts(Object.values(allContacts));
+}
+
+function renderContacts(contacts) {
+  const list = document.getElementById('contact-list');
+  list.innerHTML = '';
+  for (const c of contacts) {
+    const preview = c.theirMessages[c.theirMessages.length - 1] || '';
+    const div = document.createElement('div');
+    div.className = 'contact-item';
+    div.innerHTML = `
+      <div class="avatar">${c.name[0].toUpperCase()}</div>
+      <div class="contact-info">
+        <div class="contact-name">${c.name}</div>
+        <div class="contact-preview">${preview.slice(0, 60)}</div>
+      </div>
+      <div class="msg-count">${c.theirMessages.length}</div>
+    `;
+    div.onclick = () => openChat(c.name);
+    list.appendChild(div);
+  }
+}
+
+function filterContacts() {
+  const q = document.getElementById('search-input').value.toLowerCase();
+  const filtered = Object.values(allContacts).filter(c => c.name.toLowerCase().includes(q));
+  renderContacts(filtered);
+}
+
+function openChat(name) {
+  currentContact = allContacts[name];
+  chatHistory = [];
+
+  // Build system prompt from their messages
+  const sample = currentContact.theirMessages.slice(-200).join('\n');
+  systemPrompt = `You are mimicking a real person named "${name}" in an Instagram DM conversation.
+
+Here are examples of how ${name} actually texts — their real messages:
+
+---
+${sample}
+---
+
+Study their writing style carefully:
+- Their vocabulary, slang, abbreviations
+- How they use punctuation (or don't)
+- Their typical message length
+- Emoji usage patterns
+- Their tone (casual, funny, serious, etc.)
+- Any recurring phrases or expressions
+
+Now roleplay as ${name}. Respond exactly how they would text — same style, same energy, same vibe. Keep responses short and natural like a real DM. Never break character. Never mention you're an AI.`;
+
+  document.getElementById('contact-screen').classList.add('hidden');
+  document.getElementById('chat-screen').style.display = 'flex';
+  document.getElementById('chat-name').textContent = name;
+  document.getElementById('chat-avatar').textContent = name[0].toUpperCase();
+
+  const msgs = document.getElementById('messages');
+  msgs.innerHTML = '';
+
+  // Show last few real messages as context
+  const recent = currentContact.messages.slice(-10);
+  for (const m of recent) {
+    if (!m.content) continue;
+    const isMe = m.sender_name !== name;
+    appendBubble(m.content, isMe ? 'me' : 'them', false);
+  }
+
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function goBack() {
+  document.getElementById('chat-screen').style.display = 'none';
+  document.getElementById('contact-screen').classList.remove('hidden');
+  currentContact = null;
+  chatHistory = [];
+}
+
+async function sendMessage() {
+  const input = document.getElementById('msg-input');
+  const text = input.value.trim();
+  if (!text || !currentContact) return;
+
+  input.value = '';
+  input.style.height = 'auto';
+  appendBubble(text, 'me');
+  chatHistory.push({ role: 'user', content: text });
+
+  const btn = document.getElementById('send-btn');
+  btn.disabled = true;
+  const typingEl = appendBubble('typing…', 'them typing');
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 300,
+        system: systemPrompt,
+        messages: chatHistory
+      })
+    });
+
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+
+    const reply = data.content?.map(b => b.text || '').join('') || '…';
+    typingEl.remove();
+    appendBubble(reply, 'them');
+    chatHistory.push({ role: 'assistant', content: reply });
+  } catch (err) {
+    typingEl.textContent = 'Failed to respond. Check your API key.';
+    typingEl.classList.remove('typing');
+  }
+
+  btn.disabled = false;
+}
+
+function appendBubble(text, side, scroll = true) {
+  const msgs = document.getElementById('messages');
+  const wrap = document.createElement('div');
+  wrap.className = `bubble-wrap ${side === 'me' ? 'me' : 'them'}`;
+  const bubble = document.createElement('div');
+  bubble.className = `bubble ${side}`;
+  bubble.textContent = text;
+  wrap.appendChild(bubble);
+  msgs.appendChild(wrap);
+  if (scroll) msgs.scrollTop = msgs.scrollHeight;
+  return wrap;
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+document.getElementById('msg-input')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+
+// Restore API key
+const saved = localStorage.getItem('ig_api_key');
+if (saved) document.getElementById('api-key-input').value = saved;
+</script>
+</body>
+</html>
