@@ -297,6 +297,14 @@
       <input type="url" id="workerUrl" placeholder="https://your-worker.workers.dev/" value="">
     </div>
 
+    <div class="field" id="finetuneField" style="display:none">
+      <div class="step-label">04 — Fine-tuning (optional)</div>
+      <button id="downloadTrainingBtn" class="dropzone" style="cursor:pointer; background:none;">
+        ⬇ Download training data (.jsonl)
+      </button>
+      <div id="trainingInfo" style="font-family:var(--mono); font-size:11px; color:var(--muted);"></div>
+    </div>
+
     <div class="privacy-note">
       <strong>Nothing leaves your browser except your typed message.</strong><br>
       Your export file is parsed locally and never uploaded, saved, or sent anywhere. Only your typed message plus a short style summary is sent to your own Worker per reply.
@@ -350,6 +358,9 @@
   const sendBtn = document.getElementById('sendBtn');
   const workerUrl = document.getElementById('workerUrl');
   const resetBtn = document.getElementById('resetBtn');
+  const finetuneField = document.getElementById('finetuneField');
+  const downloadTrainingBtn = document.getElementById('downloadTrainingBtn');
+  const trainingInfo = document.getElementById('trainingInfo');
 
   // Restore worker URL only (never chat content) from localStorage for convenience
   try {
@@ -391,28 +402,57 @@
     dropzone.classList.add('has-file');
 
     state.messagesBySender = {};
+    state.allMessages = [];
     const participantSet = new Set();
+    let rawTotal = 0;
+    let skippedNoContent = 0;
+    let skippedGeneratedText = 0;
+    let filesParsed = 0;
+    let filesFailed = 0;
+
+    // patterns Instagram uses for auto-generated system strings (not real typed text)
+    const generatedPatterns = [
+      /^Reacted .* to your message$/i,
+      /^liked a message$/i,
+      /sent an attachment/i,
+      /^You sent a reel/i,
+      /shared a reel/i,
+      /shared a story/i,
+      /^Sent a photo$/i,
+      /^Sent a video$/i,
+      /unsent a message/i,
+      /set the nickname/i,
+      /changed the theme/i,
+      /^Waved$/i,
+      /is missing/i,
+    ];
 
     for (const file of files) {
       const text = await file.text();
       let json;
-      try { json = JSON.parse(text); } catch (err) { continue; }
+      try { json = JSON.parse(text); } catch (err) { filesFailed++; continue; }
+      filesParsed++;
       json = deepFix(json);
 
       (json.participants || []).forEach(p => participantSet.add(p.name));
 
       (json.messages || []).forEach(m => {
+        rawTotal++;
         if (!m.sender_name) return;
-        if (!m.content && !m.text) return; // skip pure media/reaction-only entries
         const content = m.content || m.text || "";
-        if (!content.trim()) return;
+        if (!content.trim()) { skippedNoContent++; return; }
+        if (generatedPatterns.some(re => re.test(content.trim()))) { skippedGeneratedText++; return; }
         if (!state.messagesBySender[m.sender_name]) state.messagesBySender[m.sender_name] = [];
-        state.messagesBySender[m.sender_name].push({
-          content: content,
-          ts: m.timestamp_ms || 0,
-        });
+        const entry = { content: content, ts: m.timestamp_ms || 0, sender: m.sender_name };
+        state.messagesBySender[m.sender_name].push(entry);
+        state.allMessages.push(entry);
       });
     }
+
+    state.debug = {
+      filesParsed, filesFailed, rawTotal, skippedNoContent, skippedGeneratedText,
+      kept: Object.values(state.messagesBySender).reduce((a, arr) => a + arr.length, 0)
+    };
 
     state.participants = Array.from(participantSet);
     if (!state.participants.length) {
@@ -421,9 +461,30 @@
 
     // sort each sender's messages chronologically
     Object.values(state.messagesBySender).forEach(arr => arr.sort((a, b) => a.ts - b.ts));
+    state.allMessages.sort((a, b) => a.ts - b.ts);
 
+    renderDebugCard();
     populateParticipants();
   });
+
+  function renderDebugCard() {
+    const d = state.debug;
+    if (!d) return;
+    let card = document.getElementById('debugCard');
+    if (!card) {
+      card = document.createElement('div');
+      card.id = 'debugCard';
+      card.className = 'profile-card show';
+      participantField.parentNode.insertBefore(card, participantField);
+    }
+    card.innerHTML = `
+      <div class="row"><span>files parsed</span><span>${d.filesParsed}${d.filesFailed ? ` (${d.filesFailed} failed)` : ''}</span></div>
+      <div class="row"><span>raw entries found</span><span>${d.rawTotal}</span></div>
+      <div class="row"><span>skipped: no text (media/reaction)</span><span>${d.skippedNoContent}</span></div>
+      <div class="row"><span>skipped: system text</span><span>${d.skippedGeneratedText}</span></div>
+      <div class="row"><span>usable text messages</span><span>${d.kept}</span></div>
+    `;
+  }
 
   function populateParticipants() {
     participantSelect.innerHTML = '';
@@ -452,7 +513,9 @@
     state.activeSender = name;
     state.history = [];
     const msgs = state.messagesBySender[name] || [];
+    state.activeMsgs = msgs;
     state.styleProfile = buildStyleProfile(name, msgs);
+    state.docFreq = buildDocFreq(msgs);
     renderProfileCard(msgs);
 
     chatName.innerHTML = `${name} <span class="sub">reconstructed from ${msgs.length} messages</span>`;
@@ -462,6 +525,66 @@
     sendBtn.disabled = false;
     msgInput.placeholder = `Message ${name}…`;
     msgInput.focus();
+    finetuneField.style.display = 'flex';
+  }
+
+  // --- Retrieval: find the most relevant real messages for the current input ---
+  function tokenize(str) {
+    return (str.toLowerCase().match(/[a-z0-9']+/g) || []);
+  }
+
+  function buildDocFreq(msgs) {
+    const df = {};
+    msgs.forEach(m => {
+      const seen = new Set(tokenize(m.content));
+      seen.forEach(w => { df[w] = (df[w] || 0) + 1; });
+    });
+    return df;
+  }
+
+  function findRelevantExamples(query, msgs, df, topN) {
+    const qTokens = Array.from(new Set(tokenize(query)));
+    if (!qTokens.length || !msgs.length) return [];
+    const N = msgs.length;
+
+    const scored = [];
+    for (let i = 0; i < msgs.length; i++) {
+      const m = msgs[i];
+      if (m.content.length < 2 || m.content.length > 150) continue;
+      const mTokens = new Set(tokenize(m.content));
+      let score = 0;
+      for (const t of qTokens) {
+        if (mTokens.has(t)) {
+          const idf = Math.log(N / (1 + (df[t] || 0)));
+          score += Math.max(idf, 0.15);
+        }
+      }
+      if (score > 0) scored.push({ content: m.content, score });
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, topN).map(s => s.content);
+  }
+
+  function buildExamplesSection(query) {
+    const msgs = state.activeMsgs || [];
+    if (!msgs.length) return '';
+
+    let examples = findRelevantExamples(query, msgs, state.docFreq || {}, 15);
+
+    // fallback / padding: if few relevant matches, add some random real messages too
+    if (examples.length < 6) {
+      const pool = msgs.filter(m => m.content.length > 3 && m.content.length < 120);
+      const extra = pool
+        .sort(() => Math.random() - 0.5)
+        .slice(0, 8 - examples.length)
+        .map(m => m.content);
+      examples = examples.concat(extra);
+    }
+
+    if (!examples.length) return '';
+    const list = examples.map(e => `"${e}"`).join('\n');
+    return `Real messages this person has actually sent, closest in topic/tone to what they're about to reply to (match this voice, do not repeat verbatim):\n${list}`;
   }
 
   function buildStyleProfile(name, msgs) {
@@ -501,14 +624,6 @@
       .slice(0, 8)
       .map(([w]) => w);
 
-    // a handful of real example messages, verbatim, to anchor the voice
-    const examples = sample
-      .filter(m => m.content.length > 3 && m.content.length < 120)
-      .sort(() => Math.random() - 0.5)
-      .slice(0, 6)
-      .map(m => `"${m.content}"`)
-      .join('\n');
-
     return [
       `Average message length: ~${avgLen} characters.`,
       mostlyLower ? `Usually types in lowercase, rarely capitalizes.` : `Uses normal capitalization.`,
@@ -516,7 +631,6 @@
       `Uses emoji in about ${emojiRate}% of messages.`,
       `Uses exclamation marks in about ${exclaimRate}% of messages.`,
       topWords.length ? `Frequently used words/slang: ${topWords.join(', ')}.` : '',
-      examples ? `Real example messages from them, to match voice/rhythm (do not repeat these verbatim, just match the style):\n${examples}` : ''
     ].filter(Boolean).join('\n');
   }
 
@@ -560,12 +674,18 @@
     }
 
     try {
+      const examplesSection = buildExamplesSection(text);
+      const matchCount = (examplesSection.match(/^"/gm) || []).length;
+      const combinedProfile = examplesSection
+        ? `${state.styleProfile}\n\n${examplesSection}`
+        : state.styleProfile;
+
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: text,
-          styleProfile: state.styleProfile,
+          styleProfile: combinedProfile,
           history: state.history.slice(-10).join('\n'),
         }),
       });
@@ -574,6 +694,12 @@
       const reply = data.reply || '(no reply)';
       addMessage(reply, 'them');
       state.history.push(`${state.activeSender}: ${reply}`);
+      if (matchCount > 0) {
+        const tag = document.createElement('div');
+        tag.style.cssText = 'align-self:flex-start;font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:-4px;margin-left:4px;';
+        tag.textContent = `matched ${matchCount} similar real messages`;
+        messagesEl.appendChild(tag);
+      }
     } catch (err) {
       typingEl.remove();
       addMessage(`⚠️ Couldn't reach the Worker (${err.message}).`, 'them');
@@ -583,6 +709,62 @@
     sendBtn.disabled = false;
     msgInput.focus();
   }
+
+  // --- Build OpenAI fine-tuning .jsonl from the full ordered conversation ---
+  function generateTrainingData(personName) {
+    const timeline = state.allMessages || [];
+    const examples = [];
+    const HISTORY_WINDOW = 6; // how many prior messages of context to include
+    let history = [];
+
+    const systemPrompt = `You are texting as ${personName} in a casual Instagram DM. Reply the way they actually text — their real length, tone, slang, and punctuation habits. Never sound like an assistant.`;
+
+    for (let i = 0; i < timeline.length; i++) {
+      const m = timeline[i];
+      if (m.sender === personName && m.content.length >= 2 && m.content.length <= 400 && history.length > 0) {
+        const userTurn = history
+          .slice(-HISTORY_WINDOW)
+          .map(h => `${h.sender}: ${h.content}`)
+          .join('\n');
+
+        examples.push({
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userTurn },
+            { role: 'assistant', content: m.content },
+          ],
+        });
+      }
+      history.push(m);
+      if (history.length > HISTORY_WINDOW) history.shift();
+    }
+
+    return examples;
+  }
+
+  downloadTrainingBtn.addEventListener('click', () => {
+    if (!state.activeSender) return;
+    const examples = generateTrainingData(state.activeSender);
+
+    if (!examples.length) {
+      trainingInfo.textContent = 'Not enough conversational context found to build training pairs.';
+      return;
+    }
+
+    const jsonl = examples.map(e => JSON.stringify(e)).join('\n');
+    const blob = new Blob([jsonl], { type: 'application/jsonl' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const safeName = state.activeSender.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    a.href = url;
+    a.download = `${safeName}_training.jsonl`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+
+    trainingInfo.textContent = `Generated ${examples.length} training examples. Upload this file directly to platform.openai.com/finetune — it never touched any server.`;
+  });
 
   sendBtn.addEventListener('click', sendMessage);
   msgInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMessage(); });
@@ -604,6 +786,8 @@
     msgInput.disabled = true;
     sendBtn.disabled = true;
     msgInput.placeholder = 'Load an export first…';
+    finetuneField.style.display = 'none';
+    trainingInfo.textContent = '';
   });
 })();
 </script>
